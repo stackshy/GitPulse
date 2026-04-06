@@ -1,0 +1,28 @@
+# Secrets — NEVER commit
+.env
+backend/configs/.env
+backend/configs/.local.env
+frontend/.env.local
+
+# Dependencies
+backend/vendor/
+frontend/node_modules/
+frontend/.next/
+
+# Build outputs
+backend/server
+backend/.next/
+*.exe
+
+# Data backup (contains local analytics data)
+backend/data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
