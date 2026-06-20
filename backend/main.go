@@ -47,7 +47,13 @@ func main() {
 	gomodHandler := gomod.NewHandler(gomodSvc)
 
 	// Social mentions (HN, Reddit, StackOverflow)
-	socialSvc := social.NewService(searchQuery)
+	redditID := app.Config.Get("REDDIT_CLIENT_ID")
+	redditSecret := app.Config.Get("REDDIT_CLIENT_SECRET")
+	if redditID == "" || redditSecret == "" {
+		app.Logger().Warnf("REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET not set — Reddit mentions will be skipped. " +
+			"Reddit blocks unauthenticated access; register a 'script' app at https://www.reddit.com/prefs/apps")
+	}
+	socialSvc := social.NewService(searchQuery, redditID, redditSecret)
 	socialHandler := social.NewHandler(socialSvc)
 
 	// Derived metrics (computed from existing data)
@@ -82,6 +88,8 @@ func main() {
 	app.GET("/api/languages", ghHandler.GetLanguages)
 	app.GET("/api/referrers", ghHandler.GetReferrers)
 	app.GET("/api/paths", ghHandler.GetPopularPaths)
+	app.POST("/api/admin/reconcile-backup", ghHandler.ReconcileBackup)
+	app.POST("/api/admin/backup", ghHandler.WriteBackup)
 
 	// Go module + Scorecard routes
 	app.GET("/api/gomod/stats", gomodHandler.GetModuleStats)
