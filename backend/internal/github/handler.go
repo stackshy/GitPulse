@@ -52,3 +52,13 @@ func (h *Handler) GetReferrers(ctx *gofr.Context) (any, error) {
 func (h *Handler) GetPopularPaths(ctx *gofr.Context) (any, error) {
 	return h.service.GetPopularPaths(ctx)
 }
+
+func (h *Handler) ReconcileBackup(ctx *gofr.Context) (any, error) {
+	return h.service.ReconcileFromBackup(ctx)
+}
+
+func (h *Handler) WriteBackup(ctx *gofr.Context) (any, error) {
+	h.service.BackupToFile(ctx)
+
+	return map[string]string{"status": "ok"}, nil
+}
