@@ -33,7 +33,7 @@ const FILTER_OPTIONS = [
 
 function FilterBar({ active, onChange }: { active: number; onChange: (d: number) => void }) {
   return (
-    <div style={{ display: "flex", gap: 4 }}>
+    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
       {FILTER_OPTIONS.map(f => (
         <button key={f.label} onClick={() => onChange(f.days)}
           style={{
@@ -50,7 +50,7 @@ function FilterBar({ active, onChange }: { active: number; onChange: (d: number)
 
 function StateFilter({ options, active, onChange }: { options: { label: string; value: string; count?: number }[]; active: string; onChange: (v: string) => void }) {
   return (
-    <div style={{ display: "flex", gap: 4 }}>
+    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
       {options.map(o => (
         <button key={o.value} onClick={() => onChange(o.value)}
           style={{
@@ -78,11 +78,11 @@ function filterByDays<T extends { date?: string; created_at?: string; week?: str
 
 function SectionTitle({ icon: Icon, text, color }: { icon: any; text: string; color: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{ width: 28, height: 28, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: `${color}15` }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+      <div style={{ width: 28, height: 28, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: `${color}15` }}>
         <Icon size={14} color={color} />
       </div>
-      <span style={{ fontSize: 14, fontWeight: 600, color: "#e0e0e8" }}>{text}</span>
+      <span style={{ fontSize: 14, fontWeight: 600, color: "#e0e0e8", whiteSpace: "nowrap" }}>{text}</span>
     </div>
   );
 }
@@ -116,6 +116,7 @@ export default function Dashboard() {
   const [issueState, setIssueState] = useState("open"); // all, open, closed
   const [prState, setPrState] = useState("open"); // all, open, merged, closed
   const [socialFilter, setSocialFilter] = useState("all"); // all, hackernews, reddit, stackoverflow
+  const [showAllReleases, setShowAllReleases] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -563,11 +564,11 @@ export default function Dashboard() {
         </div>
 
         {/* ───── Issues (with filter) + PRs (with filter) ───── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14, marginBottom: 24 }}>
           <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
               <SectionTitle icon={CircleDot} text="Issues" color="#f43f5e" />
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0 }}>
                 <StateFilter active={issueState} onChange={setIssueState} options={[
                   { label: "All", value: "all" },
                   { label: "Open", value: "open", count: issues.filter(i => i.state === "open").length },
@@ -605,9 +606,9 @@ export default function Dashboard() {
           </div>
 
           <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
               <SectionTitle icon={GitPullRequest} text="Pull Requests" color="#84cc16" />
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0 }}>
                 <StateFilter active={prState} onChange={setPrState} options={[
                   { label: "All", value: "all" },
                   { label: "Open", value: "open", count: pulls.filter(p => p.state === "open").length },
@@ -654,18 +655,32 @@ export default function Dashboard() {
             <span style={{ fontSize: 11, color: "#555570" }}>{releases.length} releases</span>
           </div>
           {releases.length === 0 ? <EmptyBox text="No releases yet" height={60} /> : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-              {releases.map((r, i) => (
-                <a key={r.tag} href={r.url} target="_blank" rel="noopener noreferrer"
-                  style={{ padding: 16, borderRadius: 12, background: "rgba(255,255,255,0.015)", border: "1px solid #1c1c2e", textDecoration: "none", color: "inherit" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS[i % COLORS.length], display: "inline-block" }} />
-                    <span style={{ fontSize: 13, fontFamily: "monospace", fontWeight: 700, color: "#e0e0e8" }}>{r.tag}</span>
-                  </div>
-                  <p style={{ fontSize: 12, color: "#555570", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 8 }}>{r.name}</p>
-                  <p style={{ fontSize: 10, color: "#3a3a50" }}>{r.author} / {fmt(r.published_at)}</p>
-                </a>))}
-            </div>
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+                {(showAllReleases ? releases : releases.slice(0, 6)).map((r, i) => (
+                  <a key={r.tag} href={r.url} target="_blank" rel="noopener noreferrer"
+                    style={{ minWidth: 0, padding: 16, borderRadius: 12, background: "rgba(255,255,255,0.015)", border: "1px solid #1c1c2e", textDecoration: "none", color: "inherit" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, minWidth: 0 }}>
+                      <span style={{ flexShrink: 0, width: 8, height: 8, borderRadius: "50%", background: COLORS[i % COLORS.length], display: "inline-block" }} />
+                      <span style={{ fontSize: 13, fontFamily: "monospace", fontWeight: 700, color: "#e0e0e8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.tag}</span>
+                    </div>
+                    <p style={{ fontSize: 12, color: "#555570", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 8 }}>{r.name}</p>
+                    <p style={{ fontSize: 10, color: "#3a3a50", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.author} / {fmt(r.published_at)}</p>
+                  </a>))}
+              </div>
+              {releases.length > 6 && (
+                <div style={{ display: "flex", justifyContent: "center", marginTop: 16 }}>
+                  <button onClick={() => setShowAllReleases(v => !v)}
+                    style={{
+                      padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer",
+                      border: "1px solid #1c1c2e", transition: "all 0.15s",
+                      background: "rgba(20,184,166,0.1)", color: "#14b8a6",
+                    }}>
+                    {showAllReleases ? "Show less" : `View all ${releases.length} releases`}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
 
