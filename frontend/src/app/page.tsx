@@ -8,7 +8,8 @@ import {
 } from "recharts";
 import {
   Star, GitFork, Eye, Download, GitPullRequest, CircleDot,
-  Users, Tag, Globe, Activity, ArrowUpRight, Zap, ExternalLink, AlertTriangle,
+  Users, Tag, Globe, Activity, ArrowUpRight, ExternalLink, AlertTriangle,
+  Info, Code2, HardDrive, Calendar,
 } from "lucide-react";
 
 const COLORS = ["#6366f1", "#14b8a6", "#f59e0b", "#f43f5e", "#0ea5e9", "#a855f7", "#ec4899", "#84cc16"];
@@ -91,6 +92,56 @@ function EmptyBox({ text, height = 120 }: { text: string; height?: number }) {
   return <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#3a3a50" }}>{text}</div>;
 }
 
+function fmtSize(kb?: number) {
+  if (!kb) return null;
+  return kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`;
+}
+
+// A compact info pill used in the header meta row.
+function MetaPill({ icon: Icon, label, color = "#6366f1" }: { icon?: React.ElementType; label: string; color?: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 7, background: "rgba(255,255,255,0.025)", border: "1px solid #1c1c2e", fontSize: 11, color: "#8a8aa0", whiteSpace: "nowrap" }}>
+      {Icon ? <Icon size={12} color={color} /> : <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, display: "inline-block" }} />}
+      {label}
+    </span>
+  );
+}
+
+// Sticky in-page navigation with active-section highlighting (scroll-spy).
+function NavBar({ items, active, onSelect }: { items: { id: string; label: string }[]; active: string; onSelect: (id: string) => void }) {
+  return (
+    <nav style={{ position: "sticky", top: 0, zIndex: 20, margin: "0 -32px 24px", padding: "10px 32px", background: "rgba(11,11,18,0.88)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderBottom: "1px solid #16161f" }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", maxWidth: 1380, margin: "0 auto" }}>
+        {items.map(it => {
+          const on = it.id === active;
+          return (
+            <a key={it.id} href={`#${it.id}`} onClick={() => onSelect(it.id)}
+              style={{
+                display: "inline-flex", alignItems: "center", cursor: "pointer",
+                padding: "6px 13px", borderRadius: 8, fontSize: 12.5,
+                fontWeight: on ? 600 : 500,
+                color: on ? "#c7d2fe" : "#8a8aa0",
+                background: on ? "rgba(99,102,241,0.16)" : "transparent",
+                border: `1px solid ${on ? "rgba(99,102,241,0.45)" : "transparent"}`,
+                boxShadow: on ? "0 0 0 1px rgba(99,102,241,0.1), 0 2px 8px rgba(99,102,241,0.18)" : "none",
+                textDecoration: "none", transition: "all 0.15s",
+              }}
+              onMouseEnter={e => { if (!on) { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; e.currentTarget.style.color = "#d0d0e0"; } }}
+              onMouseLeave={e => { if (!on) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#8a8aa0"; } }}>
+              {it.label}
+            </a>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+// A simple pulsing skeleton block reusing the card chrome.
+function Skel({ height = 120, style }: { height?: number; style?: React.CSSProperties }) {
+  return <div style={{ height, borderRadius: 14, background: "#111119", border: "1px solid #1c1c2e", animation: "pulse 1.4s ease-in-out infinite", ...style }} />;
+}
+
 export default function Dashboard() {
   const [summary, setSummary] = useState<any>(null);
   const [traffic, setTraffic] = useState<any[]>([]);
@@ -117,6 +168,7 @@ export default function Dashboard() {
   const [prState, setPrState] = useState("open"); // all, open, merged, closed
   const [socialFilter, setSocialFilter] = useState("all"); // all, hackernews, reddit, stackoverflow
   const [showAllReleases, setShowAllReleases] = useState(false);
+  const [activeSection, setActiveSection] = useState("overview");
 
   useEffect(() => {
     async function load() {
@@ -193,13 +245,74 @@ export default function Dashboard() {
   const hasRealData = (summary?.stars || 0) > 0 || realTraffic.length > 0 ||
     contributors.length > 0 || issues.length > 0 || commits.length > 0 || langData.length > 0;
 
+  const latestDate = useMemo(() => {
+    const dates = realTraffic.map(t => t.date).filter(Boolean).sort();
+    return dates.length ? dates[dates.length - 1] : "";
+  }, [realTraffic]);
+
+  const hasScorecard = !!scorecard?.score;
+  const hasGoMod = !!gomodStats?.version_count;
+  const hasSocial = !!(socialData && socialData.total_mentions > 0);
+  const hasContent = referrers.length > 0 || paths.length > 0;
+
+  const navItems = useMemo(() => {
+    const items = [
+      { id: "overview", label: "Overview" },
+      { id: "traffic", label: "Traffic" },
+      { id: "health", label: "Health" },
+    ];
+    if (metrics) items.push({ id: "community", label: "Community" });
+    if (hasSocial) items.push({ id: "social", label: "Social" });
+    if (hasContent) items.push({ id: "content", label: "Content" });
+    items.push({ id: "activity", label: "Activity" });
+    items.push({ id: "people", label: "Contributors" });
+    items.push({ id: "tracker", label: "Issues & PRs" });
+    items.push({ id: "releases", label: "Releases" });
+    return items;
+  }, [metrics, hasSocial, hasContent]);
+
+  // Scroll-spy: highlight the nav item for the section currently near the top.
+  useEffect(() => {
+    if (loading) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter(e => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) setActiveSection(visible[0].target.id);
+      },
+      { rootMargin: "-72px 0px -65% 0px", threshold: [0, 0.1] }
+    );
+    navItems.forEach(it => {
+      const el = document.getElementById(it.id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, [navItems, loading]);
+
   if (loading) {
     return (
-      <div style={{ background: "#0b0b12", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ textAlign: "center" }}>
-          <div style={{ width: 36, height: 36, border: "2px solid #1c1c30", borderTopColor: "#6366f1", borderRadius: "50%", animation: "spin 0.7s linear infinite", margin: "0 auto" }} />
-          <p style={{ color: "#4a4a60", fontSize: 12, marginTop: 12 }}>Loading...</p>
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <div style={{ background: "#0b0b12", minHeight: "100vh", color: "#c0c0d0" }}>
+        <style>{`@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }`}</style>
+        <div style={{ maxWidth: 1380, margin: "0 auto", padding: "40px 32px" }}>
+          {/* Header skeleton */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
+            <Skel height={42} style={{ width: 42, borderRadius: 12 }} />
+            <div style={{ flex: 1 }}>
+              <Skel height={20} style={{ width: 220, marginBottom: 8, borderRadius: 6 }} />
+              <Skel height={12} style={{ width: 140, borderRadius: 6 }} />
+            </div>
+          </div>
+          <Skel height={40} style={{ marginBottom: 24, borderRadius: 8 }} />
+          {/* Stat cards skeleton */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 24 }}>
+            {Array.from({ length: 6 }).map((_, i) => <Skel key={i} height={76} />)}
+          </div>
+          {/* Chart skeleton */}
+          <Skel height={400} style={{ marginBottom: 24 }} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
+            {Array.from({ length: 3 }).map((_, i) => <Skel key={i} height={220} />)}
+          </div>
         </div>
       </div>
     );
@@ -207,16 +320,45 @@ export default function Dashboard() {
 
   return (
     <div style={{ background: "#0b0b12", minHeight: "100vh", color: "#c0c0d0" }}>
+      <style>{`@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } } @keyframes ping { 0% { transform: scale(1); opacity: 0.75; } 75%,100% { transform: scale(2.6); opacity: 0; } } @keyframes glow { 0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.5); } 50% { box-shadow: 0 0 8px 1px rgba(34,197,94,0.55); } } html { scroll-behavior: smooth; }`}</style>
       <div style={{ maxWidth: 1380, margin: "0 auto", padding: "40px 32px" }}>
 
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 24, marginBottom: 18, flexWrap: "wrap" }}>
+          {/* Left: logo + title */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
             <a href={`https://github.com/${repoName}`} target="_blank" rel="noopener noreferrer"
-              style={{ width: 42, height: 42, borderRadius: 12, background: "linear-gradient(135deg, #6366f1, #06b6d4)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", transition: "opacity 0.15s" }}
-              onMouseEnter={e => e.currentTarget.style.opacity = "0.85"}
-              onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
-              <Zap size={20} color="#fff" />
+              style={{
+                width: 44, height: 44, borderRadius: 13, flexShrink: 0,
+                background: "linear-gradient(140deg, rgba(129,140,248,0.30) 0%, rgba(99,102,241,0.18) 45%, rgba(6,182,212,0.16) 100%)",
+                backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
+                display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none",
+                border: "1px solid rgba(165,180,252,0.35)",
+                boxShadow: "0 4px 20px rgba(99,102,241,0.35), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 -8px 16px rgba(6,182,212,0.10)",
+                transition: "transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-1px) scale(1.05)"; e.currentTarget.style.boxShadow = "0 7px 26px rgba(99,102,241,0.55), inset 0 1px 0 rgba(255,255,255,0.38), inset 0 -8px 16px rgba(6,182,212,0.16)"; e.currentTarget.style.borderColor = "rgba(165,180,252,0.55)"; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 4px 20px rgba(99,102,241,0.35), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 -8px 16px rgba(6,182,212,0.10)"; e.currentTarget.style.borderColor = "rgba(165,180,252,0.35)"; }}>
+              <svg width="25" height="25" viewBox="0 0 24 24" fill="none" aria-label="cloudemu Analytics">
+                <defs>
+                  <linearGradient id="logoBars" x1="6" y1="18" x2="18" y2="7" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stopColor="#e0e7ff" />
+                    <stop offset="55%" stopColor="#a5b4fc" />
+                    <stop offset="100%" stopColor="#67e8f9" />
+                  </linearGradient>
+                  <linearGradient id="logoCloud" x1="3" y1="19" x2="20" y2="6" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stopColor="#a5b4fc" />
+                    <stop offset="100%" stopColor="#7dd3fc" />
+                  </linearGradient>
+                </defs>
+                {/* cloud body (cloudemu) */}
+                <path d="M17.5 19.5H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"
+                  fill="rgba(255,255,255,0.07)" stroke="url(#logoCloud)" strokeWidth="1.4" strokeLinejoin="round" />
+                {/* ascending bars (analytics) */}
+                <rect x="8" y="13" width="2" height="3.3" rx="1" fill="url(#logoBars)" fillOpacity="0.8" />
+                <rect x="11" y="11" width="2" height="5.3" rx="1" fill="url(#logoBars)" fillOpacity="0.92" />
+                <rect x="14" y="9" width="2" height="7.3" rx="1" fill="url(#logoBars)" />
+              </svg>
             </a>
             <div>
               <a href={`https://github.com/${repoName}`} target="_blank" rel="noopener noreferrer"
@@ -230,11 +372,49 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 7, height: 7, borderRadius: "50%", background: hasRealData ? "#22c55e" : "#f59e0b" }} />
-            <span style={{ fontSize: 11, color: "#555570" }}>{hasRealData ? "Live" : "Awaiting data"}</span>
+
+          {/* Middle: repo description + meta pills (fills the empty band) */}
+          <div style={{ flex: 1, minWidth: 240, display: "flex", flexDirection: "column", gap: 11 }}>
+            {summary?.description && (
+              <p style={{
+                fontSize: 13.5, color: "#aab0c8", lineHeight: 1.55, margin: 0, maxWidth: 560,
+                fontWeight: 400, letterSpacing: "0.005em",
+                display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+              }}>{summary.description}</p>
+            )}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {summary?.language && <MetaPill icon={Code2} label={summary.language} color={COLORS[0]} />}
+              {fmtSize(summary?.size) && <MetaPill icon={HardDrive} label={fmtSize(summary?.size)!} color="#a855f7" />}
+              {(summary?.watchers ?? 0) > 0 && <MetaPill icon={Eye} label={`${summary.watchers.toLocaleString()} watching`} color="#0ea5e9" />}
+              {latestDate && <MetaPill icon={Calendar} label={`Data through ${fmt(latestDate)}`} color="#14b8a6" />}
+            </div>
+          </div>
+
+          {/* Right: live status */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 9, flexShrink: 0, alignSelf: "flex-start",
+            padding: "5px 12px 5px 11px", borderRadius: 999,
+            background: hasRealData ? "rgba(34,197,94,0.08)" : "rgba(245,158,11,0.08)",
+            border: `1px solid ${hasRealData ? "rgba(34,197,94,0.28)" : "rgba(245,158,11,0.28)"}`,
+          }}>
+            <span style={{ position: "relative", display: "inline-flex", width: 8, height: 8 }}>
+              {hasRealData && (
+                <span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "#22c55e", animation: "ping 1.8s cubic-bezier(0,0,0.2,1) infinite" }} />
+              )}
+              <span style={{
+                position: "relative", width: 8, height: 8, borderRadius: "50%",
+                background: hasRealData ? "#22c55e" : "#f59e0b",
+                animation: hasRealData ? "glow 2s ease-in-out infinite" : "pulse 1.6s ease-in-out infinite",
+              }} />
+            </span>
+            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: hasRealData ? "#4ade80" : "#fbbf24" }}>
+              {hasRealData ? "Live" : "Awaiting data"}
+            </span>
           </div>
         </div>
+
+        {/* Sticky in-page navigation */}
+        <NavBar items={navItems} active={activeSection} onSelect={setActiveSection} />
 
         {!hasRealData && (
           <div style={{ background: "#18150e", border: "1px solid #2e2810", borderRadius: 14, padding: "16px 20px", marginBottom: 24, display: "flex", gap: 12 }}>
@@ -247,7 +427,7 @@ export default function Dashboard() {
         )}
 
         {/* Stat Cards */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, marginBottom: 24 }}>
+        <div id="overview" style={{ scrollMarginTop: 70, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 24 }}>
           {[
             { label: "Stars", val: summary?.stars ?? 0, Icon: Star, color: "#eab308" },
             { label: "Forks", val: summary?.forks ?? 0, Icon: GitFork, color: "#6366f1" },
@@ -269,24 +449,24 @@ export default function Dashboard() {
         </div>
 
         {/* ───── Traffic Chart with Filter ───── */}
-        <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24, marginBottom: 24 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <div id="traffic" style={{ scrollMarginTop: 70, background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24, marginBottom: 24 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
             <SectionTitle icon={Activity} text="Traffic" color="#14b8a6" />
-            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#555570" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#14b8a6", display: "inline-block" }} />Clones</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#6366f1", display: "inline-block" }} />Unique Cloners</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#0ea5e9", display: "inline-block" }} />Views</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#f59e0b", display: "inline-block" }} />Unique Visitors</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#555570", flexWrap: "wrap" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#14b8a6", display: "inline-block" }} />Clones</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#6366f1", display: "inline-block" }} />Unique Cloners</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#0ea5e9", display: "inline-block" }} />Views</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#f59e0b", display: "inline-block" }} />Unique Visitors</span>
               </div>
               <FilterBar active={trafficDays} onChange={setTrafficDays} />
             </div>
           </div>
-          <div style={{ display: "flex", gap: 24, marginBottom: 16 }}>
-            <div><span style={{ fontSize: 20, fontWeight: 700, color: "#14b8a6" }}>{fTotalClones.toLocaleString()}</span><span style={{ fontSize: 11, color: "#555570", marginLeft: 6 }}>clones</span></div>
-            <div><span style={{ fontSize: 20, fontWeight: 700, color: "#6366f1" }}>{fTotalUC.toLocaleString()}</span><span style={{ fontSize: 11, color: "#555570", marginLeft: 6 }}>unique cloners</span></div>
-            <div><span style={{ fontSize: 20, fontWeight: 700, color: "#0ea5e9" }}>{fTotalViews.toLocaleString()}</span><span style={{ fontSize: 11, color: "#555570", marginLeft: 6 }}>views</span></div>
-            <div><span style={{ fontSize: 20, fontWeight: 700, color: "#f59e0b" }}>{fTotalUV.toLocaleString()}</span><span style={{ fontSize: 11, color: "#555570", marginLeft: 6 }}>unique visitors</span></div>
+          <div style={{ display: "flex", gap: "10px 24px", flexWrap: "wrap", marginBottom: 16 }}>
+            <div style={{ whiteSpace: "nowrap" }}><span style={{ fontSize: 20, fontWeight: 700, color: "#14b8a6" }}>{fTotalClones.toLocaleString()}</span><span style={{ fontSize: 11, color: "#555570", marginLeft: 6 }}>clones</span></div>
+            <div style={{ whiteSpace: "nowrap" }}><span style={{ fontSize: 20, fontWeight: 700, color: "#6366f1" }}>{fTotalUC.toLocaleString()}</span><span style={{ fontSize: 11, color: "#555570", marginLeft: 6 }}>unique cloners</span></div>
+            <div style={{ whiteSpace: "nowrap" }}><span style={{ fontSize: 20, fontWeight: 700, color: "#0ea5e9" }}>{fTotalViews.toLocaleString()}</span><span style={{ fontSize: 11, color: "#555570", marginLeft: 6 }}>views</span></div>
+            <div style={{ whiteSpace: "nowrap" }}><span style={{ fontSize: 20, fontWeight: 700, color: "#f59e0b" }}>{fTotalUV.toLocaleString()}</span><span style={{ fontSize: 11, color: "#555570", marginLeft: 6 }}>unique visitors</span></div>
           </div>
           {filteredTraffic.length < 2 ? (
             <EmptyBox text="Traffic data will appear after the backend syncs" height={280} />
@@ -309,8 +489,8 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* ───── Health + Scorecard + Go Module ───── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 24 }}>
+        {/* ───── Health + (Scorecard or Repo Info) + Go Module ───── */}
+        <div id="health" style={{ scrollMarginTop: 70, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14, marginBottom: 24 }}>
           <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24, textAlign: "center" }}>
             <p style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#555570", marginBottom: 12 }}>Project Health</p>
             {metrics?.health_score != null ? (<>
@@ -324,37 +504,78 @@ export default function Dashboard() {
               </div>
             </>) : <EmptyBox text="Computing..." height={140} />}
           </div>
-          <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
-            <SectionTitle icon={Activity} text="Security Scorecard" color="#22c55e" />
-            {scorecard?.score ? (<div style={{ marginTop: 12 }}>
-              <div style={{ textAlign: "center", marginBottom: 16 }}><span style={{ fontSize: 40, fontWeight: 800, color: scorecard.score >= 7 ? "#22c55e" : scorecard.score >= 4 ? "#f59e0b" : "#f43f5e" }}>{scorecard.score.toFixed(1)}</span><span style={{ fontSize: 16, color: "#555570" }}> / 10</span></div>
-              <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
-                {scorecard.checks?.slice(0, 8).map((c: any) => (
-                  <div key={c.name} style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 11, color: "#c0c0d0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>{c.name}</span>
-                    <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "monospace", color: c.score >= 7 ? "#22c55e" : c.score >= 4 ? "#f59e0b" : "#f43f5e" }}>{c.score}/10</span>
-                  </div>))}
+          {hasScorecard ? (
+            <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
+              <SectionTitle icon={Activity} text="Security Scorecard" color="#22c55e" />
+              <div style={{ marginTop: 12 }}>
+                <div style={{ textAlign: "center", marginBottom: 16 }}><span style={{ fontSize: 40, fontWeight: 800, color: scorecard.score >= 7 ? "#22c55e" : scorecard.score >= 4 ? "#f59e0b" : "#f43f5e" }}>{scorecard.score.toFixed(1)}</span><span style={{ fontSize: 16, color: "#555570" }}> / 10</span></div>
+                <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+                  {scorecard.checks?.slice(0, 8).map((c: any) => (
+                    <div key={c.name} style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 11, color: "#c0c0d0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>{c.name}</span>
+                      <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "monospace", color: c.score >= 7 ? "#22c55e" : c.score >= 4 ? "#f59e0b" : "#f43f5e" }}>{c.score}/10</span>
+                    </div>))}
+                </div>
               </div>
-            </div>) : <EmptyBox text="No scorecard data" height={160} />}
-          </div>
-          <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
-            <SectionTitle icon={Download} text="Go Module" color="#06b6d4" />
-            {gomodStats?.version_count ? (<div style={{ marginTop: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-                <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 12 }}><p style={{ fontSize: 10, color: "#555570" }}>Versions</p><p style={{ fontSize: 22, fontWeight: 700, color: "#e0e0e8" }}>{gomodStats.version_count}</p></div>
-                <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 12 }}><p style={{ fontSize: 10, color: "#555570" }}>Dependents</p><p style={{ fontSize: 22, fontWeight: 700, color: "#06b6d4" }}>{gomodStats.dependent_count || 0}</p></div>
+            </div>
+          ) : (
+            <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
+              <SectionTitle icon={Info} text="Repository Info" color="#6366f1" />
+              <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+                {summary?.description && (
+                  <p style={{ fontSize: 12.5, color: "#9a9ab0", lineHeight: 1.55, margin: 0 }}>{summary.description}</p>
+                )}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  {summary?.language && (
+                    <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 12 }}>
+                      <p style={{ fontSize: 10, color: "#555570", marginBottom: 4 }}>Language</p>
+                      <p style={{ fontSize: 15, fontWeight: 700, color: "#e0e0e8", display: "flex", alignItems: "center", gap: 7 }}>
+                        <span style={{ width: 9, height: 9, borderRadius: "50%", background: COLORS[0], display: "inline-block" }} />{summary.language}
+                      </p>
+                    </div>
+                  )}
+                  {fmtSize(summary?.size) && (
+                    <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 12 }}>
+                      <p style={{ fontSize: 10, color: "#555570", marginBottom: 4 }}>Repo Size</p>
+                      <p style={{ fontSize: 15, fontWeight: 700, color: "#e0e0e8" }}>{fmtSize(summary?.size)}</p>
+                    </div>
+                  )}
+                  <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 12 }}>
+                    <p style={{ fontSize: 10, color: "#555570", marginBottom: 4 }}>Watchers</p>
+                    <p style={{ fontSize: 15, fontWeight: 700, color: "#e0e0e8" }}>{(summary?.watchers ?? 0).toLocaleString()}</p>
+                  </div>
+                  <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 12 }}>
+                    <p style={{ fontSize: 10, color: "#555570", marginBottom: 4 }}>Open Issues</p>
+                    <p style={{ fontSize: 15, fontWeight: 700, color: "#e0e0e8" }}>{(summary?.open_issues ?? openIssues.length).toLocaleString()}</p>
+                  </div>
+                </div>
+                <a href={`https://github.com/${repoName}`} target="_blank" rel="noopener noreferrer"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#818cf8", textDecoration: "none" }}>
+                  View on GitHub <ArrowUpRight size={13} />
+                </a>
               </div>
-              <p style={{ fontSize: 11, color: "#555570" }}>Latest: <span style={{ color: "#e0e0e8", fontFamily: "monospace" }}>{gomodStats.latest_version}</span></p>
-              {gomodStats.dependents?.length > 0 && <div style={{ marginTop: 12 }}><p style={{ fontSize: 10, color: "#555570", marginBottom: 6 }}>Used by:</p>
-                <div style={{ maxHeight: 80, overflowY: "auto" }}>{gomodStats.dependents.slice(0, 8).map((d: any, i: number) => (
-                  <p key={i} style={{ fontSize: 11, fontFamily: "monospace", color: "#6366f1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.module}</p>))}</div></div>}
-            </div>) : <EmptyBox text="No Go module data" height={160} />}
-          </div>
+            </div>
+          )}
+          {hasGoMod && (
+            <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
+              <SectionTitle icon={Download} text="Go Module" color="#06b6d4" />
+              <div style={{ marginTop: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                  <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 12 }}><p style={{ fontSize: 10, color: "#555570" }}>Versions</p><p style={{ fontSize: 22, fontWeight: 700, color: "#e0e0e8" }}>{gomodStats.version_count}</p></div>
+                  <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 12 }}><p style={{ fontSize: 10, color: "#555570" }}>Dependents</p><p style={{ fontSize: 22, fontWeight: 700, color: "#06b6d4" }}>{gomodStats.dependent_count || 0}</p></div>
+                </div>
+                <p style={{ fontSize: 11, color: "#555570" }}>Latest: <span style={{ color: "#e0e0e8", fontFamily: "monospace" }}>{gomodStats.latest_version}</span></p>
+                {gomodStats.dependents?.length > 0 && <div style={{ marginTop: 12 }}><p style={{ fontSize: 10, color: "#555570", marginBottom: 6 }}>Used by:</p>
+                  <div style={{ maxHeight: 80, overflowY: "auto" }}>{gomodStats.dependents.slice(0, 8).map((d: any, i: number) => (
+                    <p key={i} style={{ fontSize: 11, fontFamily: "monospace", color: "#6366f1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.module}</p>))}</div></div>}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ───── Community Health Row ───── */}
         {metrics && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 24 }}>
+          <div id="community" style={{ scrollMarginTop: 70, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
             {[
               { label: "Fork/Star Ratio", value: metrics.fork_star_ratio?.toFixed(2) || "0", sub: metrics.fork_star_ratio >= 0.2 ? "Active usage" : "Growing" },
               { label: "Release Cadence", value: metrics.release_cadence_days ? `${metrics.release_cadence_days}d` : "—", sub: "Avg between releases" },
@@ -372,8 +593,8 @@ export default function Dashboard() {
         )}
 
         {/* ───── Social Mentions ───── */}
-        {socialData && socialData.total_mentions > 0 && (
-          <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24, marginBottom: 24 }}>
+        {hasSocial && (
+          <div id="social" style={{ scrollMarginTop: 70, background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24, marginBottom: 24 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <SectionTitle icon={Globe} text="Social Mentions" color="#a855f7" />
               <StateFilter active={socialFilter} onChange={setSocialFilter} options={[
@@ -404,7 +625,8 @@ export default function Dashboard() {
         )}
 
         {/* ───── Referrers + Popular Content ───── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 24 }}>
+        {hasContent && (
+        <div id="content" style={{ scrollMarginTop: 70, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14, marginBottom: 24 }}>
           <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
             <h2 style={{ fontSize: 15, fontWeight: 600, color: "#e0e0e8", marginBottom: 16 }}>Referring Sites</h2>
             {referrers.length === 0 ? <EmptyBox text="No referrer data" height={100} /> : (
@@ -434,9 +656,10 @@ export default function Dashboard() {
                 </tr>))}</tbody></table>)}
           </div>
         </div>
+        )}
 
         {/* ───── Commits (with filter) + Languages ───── */}
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14, marginBottom: 24 }}>
+        <div id="activity" style={{ scrollMarginTop: 70, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, marginBottom: 24 }}>
           <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <SectionTitle icon={Activity} text="Weekly Commits" color="#6366f1" />
@@ -478,7 +701,7 @@ export default function Dashboard() {
         </div>
 
         {/* ───── Star History + Code Size + Contributor Growth ───── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginBottom: 24 }}>
           {/* Star History */}
           <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -541,7 +764,7 @@ export default function Dashboard() {
         </div>
 
         {/* ───── Contributors ───── */}
-        <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24, marginBottom: 24 }}>
+        <div id="people" style={{ scrollMarginTop: 70, background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24, marginBottom: 24 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <SectionTitle icon={Users} text="Contributors" color="#0ea5e9" />
             <span style={{ fontSize: 11, color: "#555570" }}>{contributors.length} people</span>
@@ -564,7 +787,7 @@ export default function Dashboard() {
         </div>
 
         {/* ───── Issues (with filter) + PRs (with filter) ───── */}
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14, marginBottom: 24 }}>
+        <div id="tracker" style={{ scrollMarginTop: 70, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 14, marginBottom: 24 }}>
           <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
               <SectionTitle icon={CircleDot} text="Issues" color="#f43f5e" />
@@ -649,14 +872,14 @@ export default function Dashboard() {
         </div>
 
         {/* ───── Releases ───── */}
-        <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24, marginBottom: 24 }}>
+        <div id="releases" style={{ scrollMarginTop: 70, background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24, marginBottom: 24 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <SectionTitle icon={Tag} text="Releases" color="#14b8a6" />
             <span style={{ fontSize: 11, color: "#555570" }}>{releases.length} releases</span>
           </div>
           {releases.length === 0 ? <EmptyBox text="No releases yet" height={60} /> : (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                 {(showAllReleases ? releases : releases.slice(0, 6)).map((r, i) => (
                   <a key={r.tag} href={r.url} target="_blank" rel="noopener noreferrer"
                     style={{ minWidth: 0, padding: 16, borderRadius: 12, background: "rgba(255,255,255,0.015)", border: "1px solid #1c1c2e", textDecoration: "none", color: "inherit" }}>
