@@ -341,18 +341,27 @@ func (s *Service) fetchAndCacheContributors(ctx *gofr.Context) {
 
 func (s *Service) fetchAndCacheCommits(ctx *gofr.Context) {
 	// GitHub returns 202 the first time stats are requested (computing).
-	// Retry up to 3 times with a short delay.
-	var items []map[string]any
-
+	// Retry with backoff; on persistent 202, leave the cache untouched.
 	endpoint := fmt.Sprintf("/repos/%s/stats/commit_activity", s.repo)
 
-	for attempt := 0; attempt < 5; attempt++ {
+	var items []map[string]any
+
+	delays := []time.Duration{2, 4, 8, 15, 20, 30}
+
+	for i, d := range delays {
 		items = s.fetchAPIArray(ctx, endpoint)
 		if items != nil {
 			break
 		}
 
-		time.Sleep(5 * time.Second)
+		if i < len(delays)-1 {
+			time.Sleep(d * time.Second)
+		}
+	}
+
+	if items == nil {
+		ctx.Logger.Warnf("commit_activity still computing after retries; keeping previous cache")
+		return
 	}
 
 	var commits []WeeklyCommit
@@ -504,6 +513,72 @@ func (s *Service) RestoreFromBackup(ctx *gofr.Context) {
 	ctx.Logger.Infof("Restore: restored %d traffic rows and %d referrer rows from backup", len(backup.DailyTraffic), len(backup.Referrers))
 }
 
+// ReconcileFromBackup merges backup.json into the DB without touching existing
+// non-zero values. Safe to run repeatedly: the underlying upserts use UNIQUE
+// keys (date / date+referrer) so duplicates can't be inserted, and the
+// daily_traffic upsert only overwrites a column when the incoming value is > 0.
+func (s *Service) ReconcileFromBackup(ctx *gofr.Context) (ReconcileReport, error) {
+	var rep ReconcileReport
+
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		return rep, fmt.Errorf("read backup file: %w", err)
+	}
+
+	var backup Backup
+	if err := json.Unmarshal(data, &backup); err != nil {
+		return rep, fmt.Errorf("parse backup: %w", err)
+	}
+
+	rep.TrafficSeen = len(backup.DailyTraffic)
+	rep.ReferrersSeen = len(backup.Referrers)
+
+	for _, t := range backup.DailyTraffic {
+		// Backup dates look like "2026-03-19T00:00:00+05:30"; trim to YYYY-MM-DD.
+		if len(t.Date) >= 10 {
+			t.Date = t.Date[:10]
+		}
+
+		affected, err := s.store.UpsertDailyTrafficAffected(ctx, &t)
+		switch {
+		case err != nil:
+			ctx.Logger.Errorf("Reconcile: traffic upsert for %s: %v", t.Date, err)
+			rep.TrafficErrors++
+		case affected == 1:
+			rep.TrafficInserted++
+		case affected == 2:
+			rep.TrafficUpdated++
+		default:
+			rep.TrafficUnchanged++
+		}
+	}
+
+	for _, r := range backup.Referrers {
+		if len(r.Date) >= 10 {
+			r.Date = r.Date[:10]
+		}
+
+		affected, err := s.store.UpsertReferrerAffected(ctx, &r)
+		switch {
+		case err != nil:
+			ctx.Logger.Errorf("Reconcile: referrer upsert for %s/%s: %v", r.Date, r.Referrer, err)
+			rep.ReferrerErrors++
+		case affected == 1:
+			rep.ReferrersInserted++
+		case affected == 2:
+			rep.ReferrersUpdated++
+		default:
+			rep.ReferrersUnchanged++
+		}
+	}
+
+	ctx.Logger.Infof("Reconcile: traffic seen=%d inserted=%d updated=%d unchanged=%d errors=%d; referrers seen=%d inserted=%d updated=%d unchanged=%d errors=%d",
+		rep.TrafficSeen, rep.TrafficInserted, rep.TrafficUpdated, rep.TrafficUnchanged, rep.TrafficErrors,
+		rep.ReferrersSeen, rep.ReferrersInserted, rep.ReferrersUpdated, rep.ReferrersUnchanged, rep.ReferrerErrors)
+
+	return rep, nil
+}
+
 // --- API handlers read from cache, fallback to GitHub ---
 
 // GetTraffic returns stored daily traffic from DB.
@@ -627,6 +702,11 @@ func (s *Service) fetchAPI(ctx *gofr.Context, endpoint string) map[string]any {
 
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusAccepted {
+		ctx.Logger.Debugf("GitHub API %s returned 202 (computing, will retry)", endpoint)
+		return nil
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		ctx.Logger.Errorf("GitHub API %s returned %d", endpoint, resp.StatusCode)
 		return nil
@@ -664,6 +744,11 @@ func (s *Service) fetchAPIArray(ctx *gofr.Context, endpoint string) []map[string
 	}
 
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusAccepted {
+		ctx.Logger.Debugf("GitHub API %s returned 202 (computing, will retry)", endpoint)
+		return nil
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		ctx.Logger.Errorf("GitHub API %s returned %d", endpoint, resp.StatusCode)
