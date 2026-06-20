@@ -41,6 +41,47 @@ func (*Store) UpsertReferrer(ctx *gofr.Context, r *Referrer) error {
 	return err
 }
 
+// UpsertDailyTrafficAffected runs the merge-upsert and returns the MySQL
+// affected-rows value: 1=inserted, 2=updated, 0=unchanged.
+func (*Store) UpsertDailyTrafficAffected(ctx *gofr.Context, t *DailyTraffic) (int64, error) {
+	res, err := ctx.SQL.ExecContext(ctx, `
+		INSERT INTO daily_traffic (date, clones, unique_cloners, views, unique_visitors, stars, forks, open_issues, watchers, repo_size)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			clones = IF(VALUES(clones) > 0, VALUES(clones), clones),
+			unique_cloners = IF(VALUES(unique_cloners) > 0, VALUES(unique_cloners), unique_cloners),
+			views = IF(VALUES(views) > 0, VALUES(views), views),
+			unique_visitors = IF(VALUES(unique_visitors) > 0, VALUES(unique_visitors), unique_visitors),
+			stars = IF(VALUES(stars) > 0, VALUES(stars), stars),
+			forks = IF(VALUES(forks) > 0, VALUES(forks), forks),
+			open_issues = IF(VALUES(open_issues) > 0, VALUES(open_issues), open_issues),
+			watchers = IF(VALUES(watchers) > 0, VALUES(watchers), watchers),
+			repo_size = IF(VALUES(repo_size) > 0, VALUES(repo_size), repo_size)
+	`, t.Date, t.Clones, t.UniqueCloners, t.Views, t.UniqueVisitors, t.Stars, t.Forks, t.OpenIssues, t.Watchers, t.RepoSize)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.RowsAffected()
+}
+
+// UpsertReferrerAffected runs the upsert and returns the MySQL affected-rows
+// value: 1=inserted, 2=updated, 0=unchanged.
+func (*Store) UpsertReferrerAffected(ctx *gofr.Context, r *Referrer) (int64, error) {
+	res, err := ctx.SQL.ExecContext(ctx, `
+		INSERT INTO referrers (date, referrer, count, uniques)
+		VALUES (?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			count = VALUES(count),
+			uniques = VALUES(uniques)
+	`, r.Date, r.Referrer, r.Count, r.Uniques)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.RowsAffected()
+}
+
 // GetTraffic returns daily traffic for a date range.
 func (*Store) GetTraffic(ctx *gofr.Context, from, to string) ([]DailyTraffic, error) {
 	query := `SELECT id, date, clones, unique_cloners, views, unique_visitors, stars, forks, open_issues, watchers, repo_size

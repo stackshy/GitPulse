@@ -95,6 +95,20 @@ type Backup struct {
 	Referrers    []Referrer     `json:"referrers"`
 }
 
+// ReconcileReport summarizes the result of merging backup.json into the DB.
+type ReconcileReport struct {
+	TrafficSeen        int `json:"traffic_seen"`
+	TrafficInserted    int `json:"traffic_inserted"`
+	TrafficUpdated     int `json:"traffic_updated"`
+	TrafficUnchanged   int `json:"traffic_unchanged"`
+	TrafficErrors      int `json:"traffic_errors"`
+	ReferrersSeen      int `json:"referrers_seen"`
+	ReferrersInserted  int `json:"referrers_inserted"`
+	ReferrersUpdated   int `json:"referrers_updated"`
+	ReferrersUnchanged int `json:"referrers_unchanged"`
+	ReferrerErrors     int `json:"referrer_errors"`
+}
+
 // PopularPath represents a popular content path.
 type PopularPath struct {
 	Path    string `json:"path"`

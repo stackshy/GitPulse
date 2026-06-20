@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"gofr.dev/pkg/gofr"
@@ -16,11 +18,17 @@ const cacheTTL = 25 * time.Hour
 // Service fetches social mentions from HN, Reddit, StackOverflow.
 type Service struct {
 	query string // search term, e.g. "cloudemu"
+
+	// Reddit OAuth app credentials. Reddit blocks the unauthenticated
+	// *.json endpoints, so these are required for Reddit results.
+	redditID     string
+	redditSecret string
 }
 
-// NewService creates a social service.
-func NewService(query string) *Service {
-	return &Service{query: query}
+// NewService creates a social service. redditID/redditSecret are the
+// credentials of a Reddit "script" app; if empty, Reddit is skipped.
+func NewService(query, redditID, redditSecret string) *Service {
+	return &Service{query: query, redditID: redditID, redditSecret: redditSecret}
 }
 
 // FetchAndCache fetches all social data and caches in Redis.
@@ -109,15 +117,73 @@ func (s *Service) fetchHN(ctx *gofr.Context) []Mention {
 	return mentions
 }
 
+// redditUserAgent is the unique descriptive UA Reddit requires on every
+// request: <platform>:<app-id>:<version> (by /u/<username>).
+const redditUserAgent = "go:dev.zop.cloudemu-analytics:1.0 (by /u/cloudemu)"
+
+// redditToken obtains an app-only OAuth bearer token via the client_credentials
+// grant. Reddit no longer serves the unauthenticated *.json endpoints to
+// non-browser/data-center IPs (they return an HTML 403 block page), so all
+// programmatic access must go through oauth.reddit.com with a token.
+func (s *Service) redditToken(ctx *gofr.Context) (string, error) {
+	form := neturl.Values{"grant_type": {"client_credentials"}}
+
+	req, err := http.NewRequestWithContext(ctx.Context, http.MethodPost,
+		"https://www.reddit.com/api/v1/access_token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+
+	req.SetBasicAuth(s.redditID, s.redditSecret)
+	req.Header.Set("User-Agent", redditUserAgent)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token endpoint returned %d", resp.StatusCode)
+	}
+
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
+		return "", err
+	}
+	if tok.AccessToken == "" {
+		return "", fmt.Errorf("empty access token")
+	}
+
+	return tok.AccessToken, nil
+}
+
 func (s *Service) fetchReddit(ctx *gofr.Context) []Mention {
-	url := fmt.Sprintf("https://www.reddit.com/search.json?q=%s&sort=new&limit=50", s.query)
+	if s.redditID == "" || s.redditSecret == "" {
+		ctx.Logger.Warnf("Reddit skipped: REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET not set " +
+			"(unauthenticated Reddit endpoints return 403)")
+		return nil
+	}
+
+	token, err := s.redditToken(ctx)
+	if err != nil {
+		ctx.Logger.Errorf("Reddit auth failed: %v", err)
+		return nil
+	}
+
+	url := fmt.Sprintf("https://oauth.reddit.com/search?q=%s&sort=new&limit=50", neturl.QueryEscape(s.query))
 
 	req, err := http.NewRequestWithContext(ctx.Context, http.MethodGet, url, nil)
 	if err != nil {
 		return nil
 	}
 
-	req.Header.Set("User-Agent", "cloudemu-analytics/1.0")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("User-Agent", redditUserAgent)
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
