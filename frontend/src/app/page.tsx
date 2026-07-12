@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { api } from "@/lib/api";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -169,6 +169,9 @@ export default function Dashboard() {
   const [socialFilter, setSocialFilter] = useState("all"); // all, hackernews, reddit, stackoverflow
   const [showAllReleases, setShowAllReleases] = useState(false);
   const [activeSection, setActiveSection] = useState("overview");
+  // Timestamp until which scroll-spy is suppressed (set on nav click so the
+  // highlight doesn't flicker through intermediate sections during smooth scroll).
+  const spyLockUntil = useRef(0);
 
   useEffect(() => {
     async function load() {
@@ -271,24 +274,48 @@ export default function Dashboard() {
     return items;
   }, [metrics, hasSocial, hasContent]);
 
-  // Scroll-spy: highlight the nav item for the section currently near the top.
+  // Scroll-spy: highlight the nav item for the section currently under the nav bar.
+  // Position-based (not IntersectionObserver) so the active tab reflects the section
+  // you're actually looking at, with no off-by-one lag.
   useEffect(() => {
     if (loading) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter(e => e.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible[0]) setActiveSection(visible[0].target.id);
-      },
-      { rootMargin: "-72px 0px -65% 0px", threshold: [0, 0.1] }
-    );
-    navItems.forEach(it => {
-      const el = document.getElementById(it.id);
-      if (el) observer.observe(el);
-    });
-    return () => observer.disconnect();
+    const ids = navItems.map(it => it.id);
+    // A section is "active" once its top passes just below the sticky nav.
+    const THRESHOLD = 96;
+
+    function computeActive() {
+      if (Date.now() < spyLockUntil.current) return;
+      // At the very bottom of the page, force the last section active (its top
+      // may never reach the threshold if it's short).
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
+        setActiveSection(ids[ids.length - 1]);
+        return;
+      }
+      let current = ids[0];
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        if (el.getBoundingClientRect().top <= THRESHOLD) current = id;
+        else break; // sections are in document order — the rest are further down
+      }
+      setActiveSection(current);
+    }
+
+    computeActive();
+    window.addEventListener("scroll", computeActive, { passive: true });
+    window.addEventListener("resize", computeActive);
+    return () => {
+      window.removeEventListener("scroll", computeActive);
+      window.removeEventListener("resize", computeActive);
+    };
   }, [navItems, loading]);
+
+  // On nav click: set the target active immediately and briefly suppress scroll-spy
+  // so the highlight doesn't jump through sections passed during the smooth scroll.
+  const handleNavSelect = (id: string) => {
+    setActiveSection(id);
+    spyLockUntil.current = Date.now() + 800;
+  };
 
   if (loading) {
     return (
@@ -414,7 +441,7 @@ export default function Dashboard() {
         </div>
 
         {/* Sticky in-page navigation */}
-        <NavBar items={navItems} active={activeSection} onSelect={setActiveSection} />
+        <NavBar items={navItems} active={activeSection} onSelect={handleNavSelect} />
 
         {!hasRealData && (
           <div style={{ background: "#18150e", border: "1px solid #2e2810", borderRadius: 14, padding: "16px 20px", marginBottom: 24, display: "flex", gap: 12 }}>
@@ -661,10 +688,10 @@ export default function Dashboard() {
         {/* ───── Commits (with filter) + Languages ───── */}
         <div id="activity" style={{ scrollMarginTop: 70, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, marginBottom: 24 }}>
           <div style={{ background: "#111119", border: "1px solid #1c1c2e", borderRadius: 14, padding: 24 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
               <SectionTitle icon={Activity} text="Weekly Commits" color="#6366f1" />
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ fontSize: 11, color: "#555570", fontFamily: "monospace" }}>{totalCommits} total</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0 }}>
+                <span style={{ fontSize: 11, color: "#555570", fontFamily: "monospace", whiteSpace: "nowrap" }}>{totalCommits} total</span>
                 <FilterBar active={commitDays} onChange={setCommitDays} />
               </div>
             </div>
@@ -673,7 +700,7 @@ export default function Dashboard() {
                 <BarChart data={filteredCommits} barCategoryGap="18%">
                   <XAxis dataKey="label" stroke="transparent" tick={{ fontSize: 9, fill: "#3a3a50" }} tickLine={false} interval="preserveStartEnd" />
                   <YAxis stroke="transparent" tick={{ fontSize: 9, fill: "#3a3a50" }} tickLine={false} width={24} />
-                  <Tooltip contentStyle={tipStyle} />
+                  <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#c0c0d0" }} cursor={{ fill: "rgba(99,102,241,0.08)" }} />
                   <Bar dataKey="total" radius={[3, 3, 0, 0]} name="Commits">
                     {filteredCommits.map((_, i) => (<Cell key={i} fill="#6366f1" fillOpacity={0.3 + (i / Math.max(filteredCommits.length - 1, 1)) * 0.7} />))}
                   </Bar>
