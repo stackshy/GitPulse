@@ -1,4 +1,8 @@
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:9001";
+// NEXT_PUBLIC_API_URL is inlined at build time. When it's not provided at build
+// (e.g. the ZopCloud build didn't pass it as a build arg), fall back to the
+// deployed backend rather than localhost so the browser hits a reachable API.
+const BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || "https://gitpulse-backend-753284.zopcloud.zop.dev";
 
 async function fetchAPI<T>(endpoint: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${endpoint}`);
